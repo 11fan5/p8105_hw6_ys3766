@@ -276,7 +276,7 @@ Stepwise Model (Full Model):
 The stepwise regression model exhibited the lowest RMSE and most consistent predictions across iterations, reflecting its ability to incorporate the multifactorial influences on birthweight. However, the added complexity of this model may limit interpretability in practical applications.
 
 Violin plot
-```{r}
+```{r fig.width=12, fig.height=10}
 cv_results %>%
   select(rmse_1, rmse_2, rmse_stepwise) %>%
   pivot_longer(cols = everything(), names_to = "model", values_to = "rmse") %>%
@@ -290,9 +290,7 @@ cv_results %>%
     title = "Cross-Validation RMSE Distributions for Models",
     x = "Model",
     y = "RMSE"
-  ) +
-  theme_minimal() +
-  theme(legend.position = "none")
+  ) 
 ```
 
 The violin plot of RMSE distributions clearly shows that the stepwise model achieves the best predictive performance, while Model 2 offers a more interpretable alternative with slightly lower predictive power. Model 1 is insufficient for accurate predictions, highlighting the importance of including a broader range of predictors.
