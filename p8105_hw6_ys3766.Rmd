@@ -168,3 +168,133 @@ city_results %>%
 ```
 
 The plot shows adjusted odds ratios (ORs) for solving homicides involving male vs. female victims across cities, with 95% confidence intervals (CIs). ORs > 1 suggest male homicides are more likely solved, while ORs < 1 indicate the opposite. Many cities cluster around an OR of 1, showing no significant gender-based differences, as their CIs overlap 1. Cities like New York, NY, and Chicago, IL, have narrow CIs, reflecting precise estimates due to larger sample sizes, whereas cities like Albuquerque, NM, Stockton, CA, and Fresno, CA, have wide CIs, reflecting high uncertainty due to smaller samples or variability. While most cities show no significant gender bias, the variability in cities with extreme ORs or wide CIs, such as Albuquerque, NM, and Stockton, CA, warrants further investigation.
+
+# Question 3
+Load and clean the dataset
+```{r}
+birthweight_df <- read_csv("data/birthweight.csv") %>%
+  janitor::clean_names() %>%  
+  mutate(
+    babysex = factor(babysex, levels = c(1, 2), labels = c("male", "female")),
+    frace = factor(frace, levels = c(1, 2, 3, 4, 8, 9), 
+                   labels = c("White", "Black", "Asian", "Puerto Rican", "Other", "Unknown")),
+    mrace = factor(mrace, levels = c(1, 2, 3, 4, 8), 
+                   labels = c("White", "Black", "Asian", "Puerto Rican", "Other")),
+    malform = as.logical(malform)  
+  ) %>%
+  drop_na()
+
+```
+
+Regression model
+
+```{r}
+full_model <- lm(
+  bwt ~ babysex + bhead + blength + delwt + fincome + frace + gaweeks +
+    malform + menarche + mheight + momage + mrace + parity +
+    pnumlbw + pnumsga + ppbmi + ppwt + smoken + wtgain,
+  data = birthweight_df
+)
+
+# Backward elimination
+stepwise_model <- step(full_model, direction = "backward", trace = 0)
+
+summary(stepwise_model)
+```
+
+Residual Analysis
+```{r}
+birthweight_df <- birthweight_df %>%
+  mutate(
+    predicted_bwt = predict(stepwise_model, newdata = .),
+    residuals_bwt = residuals(stepwise_model)
+  )
+
+ggplot(birthweight_df, aes(x = predicted_bwt, y = residuals_bwt)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "loess") +
+  labs(
+    title = "Residuals vs Fitted Values",
+    x = "Fitted Values (Predicted Birthweight)",
+    y = "Residuals"
+  ) +
+  theme_minimal()
+```
+
+To predict birthweight, the proposed model incorporates a combination of baby characteristics, maternal factors, and pregnancy-specific variables. This comprehensive approach reflects the biological and socioeconomic factors influencing fetal growth. Key predictors include baby sex, head circumference, and length at birth, which directly capture physical growth. Maternal characteristics such as weight at delivery, height, and smoking behavior are included as they significantly affect maternal and fetal health. Socioeconomic variables like family income and race provide proxies for healthcare access and resources. Finally, pregnancy-specific predictors like gestational age, parity, and weight gain during pregnancy address the broader context of fetal development. After applying backward elimination to refine the model, the adjusted model achieved an R^2 of approximately 0.72, indicating a strong fit to the data. Residual diagnostics showed no major deviations from linear regression assumptions.
+
+The residuals vs. fitted values plot shows that residuals are centered around zero, indicating no systematic bias in the predictions. However, a slight curvature at lower fitted values suggests potential non-linearity that could be better addressed with alternative modeling techniques, such as non-linear regression or interaction terms. Despite this, the overall distribution of residuals supports the validity of the linear model for predicting birthweight.
+
+
+
+cross validation
+```{r}
+model_1 <- lm(bwt ~ blength + gaweeks, data = birthweight_df)
+model_2 <- lm(bwt ~ bhead * blength * babysex, data = birthweight_df)
+
+set.seed(123)
+cv_results <- crossv_mc(birthweight_df, 100) %>%
+  mutate(
+    train = map(train, as_tibble),
+    test = map(test, as_tibble),
+    model_1 = map(train, ~ lm(bwt ~ blength + gaweeks, data = .x)),
+    model_2 = map(train, ~ lm(bwt ~ bhead * blength * babysex, data = .x)),
+    stepwise_model = map(train, ~ lm(
+      bwt ~ babysex + bhead + blength + delwt + fincome + frace +
+        gaweeks + malform + menarche + mheight + momage + mrace +
+        parity + pnumlbw + pnumsga + ppbmi + ppwt + smoken + wtgain,
+      data = .x
+    ))
+  ) %>%
+  mutate(
+    rmse_1 = map2_dbl(model_1, test, ~ rmse(.x, .y)),
+    rmse_2 = map2_dbl(model_2, test, ~ rmse(.x, .y)),
+    rmse_stepwise = map2_dbl(stepwise_model, test, ~ rmse(.x, .y))
+  )
+
+cv_summary <- cv_results %>%
+  select(rmse_1, rmse_2, rmse_stepwise) %>%
+  pivot_longer(cols = everything(), names_to = "model", values_to = "rmse") %>%
+  mutate(model = recode(model,
+                        "rmse_1" = "Model 1: Length + Gestational Age",
+                        "rmse_2" = "Model 2: Head Circumference + Length + Sex",
+                        "rmse_stepwise" = "Stepwise Model")) %>%
+  group_by(model) %>%
+  summarize(mean_rmse = mean(rmse), sd_rmse = sd(rmse))
+
+cv_summary %>% knitr::kable(digits = 3, caption = "Cross-Validation RMSE Summary")
+```
+Three models were compared to assess predictive performance using Monte Carlo cross-validation with 100 iterations:
+
+Model 1 (Length at Birth + Gestational Age):
+This simplest model showed the poorest predictive performance, as indicated by its high root mean squared error (RMSE) and wide variability. It lacks sufficient predictors to capture the complex relationships influencing birthweight.
+
+Model 2 (Head Circumference + Length + Sex with Interactions):
+This intermediate model significantly outperformed Model 1. By including head circumference, sex, and their interactions, it achieved better accuracy with lower RMSE and less variability. It balances simplicity and predictive power.
+
+Stepwise Model (Full Model):
+The stepwise regression model exhibited the lowest RMSE and most consistent predictions across iterations, reflecting its ability to incorporate the multifactorial influences on birthweight. However, the added complexity of this model may limit interpretability in practical applications.
+
+Violin plot
+```{r}
+cv_results %>%
+  select(rmse_1, rmse_2, rmse_stepwise) %>%
+  pivot_longer(cols = everything(), names_to = "model", values_to = "rmse") %>%
+  mutate(model = recode(model,
+                        "rmse_1" = "Model 1: Length + Gestational Age",
+                        "rmse_2" = "Model 2: Head Circumference + Length + Sex",
+                        "rmse_stepwise" = "Stepwise Model")) %>%
+  ggplot(aes(x = model, y = rmse, fill = model)) +
+  geom_violin(alpha = 0.7) +
+  labs(
+    title = "Cross-Validation RMSE Distributions for Models",
+    x = "Model",
+    y = "RMSE"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+The violin plot of RMSE distributions clearly shows that the stepwise model achieves the best predictive performance, while Model 2 offers a more interpretable alternative with slightly lower predictive power. Model 1 is insufficient for accurate predictions, highlighting the importance of including a broader range of predictors.
+
+The stepwise regression model is the most accurate for predicting birthweight, making it ideal for applications requiring precision, such as research studies or clinical decision-making. However, its complexity may limit its use in settings where interpretability is critical. Model 2 provides a strong alternative, offering a balance between simplicity and accuracy, making it suitable for public health or policy applications. Ultimately, the choice of model depends on the specific context and the need to balance interpretability, complexity, and predictive performance.
