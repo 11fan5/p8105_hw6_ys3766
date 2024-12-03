@@ -78,7 +78,7 @@ bootstrap_analysis %>%
   )
 ```
 
-The upper plot of log(beta0 x beta1) is symmetrically distributed, centered around 2.00, with values ranging from 1.95 to 2.05. This shows moderate variability in the regression coefficients across samples, but supports the stability of the model parameters and a good over all fit. 
+The upper plot of log(beta0 x beta1) is symmetrically distributed, centered slightly above 2.00, with values ranging from 1.95 to 2.05. This shows moderate variability in the regression coefficients across samples, but supports the stability of the model parameters and a good over all fit. 
 
 The lower plot of R^2 shows a symmetric distribution concentrating between 0.88 and 0.93, with a peak at around 0.91. This indicates a consistently strong model fit across the bootstrap samples, with low variability, suggesting the model reliably explains the variance in tmax using tmin. 
 
@@ -93,4 +93,78 @@ bootstrap_analysis %>%
   ) %>% knitr::kable(digits = 3)
 ```
 
+# Question 2
+import data, clean and prepare for analysi 
+```{r}
+homicide_df <- read_csv(file = "data/homicide-data.csv", na = c("Unknown", "NA", "")) %>%
+  mutate(
+    city_state = str_c(city, state, sep = ", "),
+    solved = if_else(disposition == "Closed by arrest", 1, 0),
+    victim_age = as.numeric(victim_age),
+    reported_date = as.Date(as.character(reported_date), format = "%Y%m%d"),
+  ) %>%
+  filter(
+    !city_state %in% c("Dallas, TX", "Phoenix, AZ", "Kansas City, MO", "Tulsa, AL"),
+    victim_race %in% c("White", "Black")
+  )
+```
 
+Logistic Regression for Baltimore, MD
+```{r}
+
+baltimore_results <- homicide_df %>%
+  filter(city_state == "Baltimore, MD") %>%
+  glm(solved ~ victim_age + victim_sex + victim_race, family = binomial(), data = .) %>%
+  broom::tidy(conf.int = TRUE) %>%
+  filter(term == "victim_sexMale") %>%
+  mutate(
+    OR = exp(estimate),       
+    CI_lower = exp(conf.low),   
+    CI_upper = exp(conf.high)  
+  ) %>%
+  select(OR, CI_lower, CI_upper)
+
+knitr::kable(baltimore_results, digits = 3, caption = "Adjusted OR for Male vs Female Victims in Baltimore, MD")
+
+```
+
+Logistic Regression for Each City
+```{r}
+city_results <- homicide_df %>%
+  group_by(city_state) %>%
+  nest() %>%
+  mutate(
+    model = map(data, ~ glm(solved ~ victim_age + victim_sex + victim_race, family = binomial(), data = .x)),
+    results = map(model, ~ broom::tidy(.x, conf.int = TRUE) %>%
+                    filter(term == "victim_sexMale") %>%
+                    mutate(
+                      OR = exp(estimate),
+                      ci_lower = exp(conf.low),
+                      ci_upper = exp(conf.high)
+                    ) %>%
+                    select(OR, ci_lower, ci_upper))
+  ) %>%
+  unnest(results) %>%
+  select(city_state, OR, ci_lower, ci_upper)
+
+knitr::kable(city_results, digits = 3, caption = "Adjusted ORs for Male vs Female Victims Across Cities")
+
+
+```
+
+Plot Adjusted Odds Ratios and Confidence Intervals
+
+```{r fig.width=10, fig.height=8}
+city_results %>%
+  ggplot(aes(x = reorder(city_state, OR), y = OR)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), width = 0.2) +
+  coord_flip() +
+  labs(
+    title = "Estimated ORs for Male vs Female Victims Across Cities",
+    x = "City, State",
+    y = "Odds Ratio (Male vs Female Victims)"
+  )
+```
+
+The plot shows adjusted odds ratios (ORs) for solving homicides involving male vs. female victims across cities, with 95% confidence intervals (CIs). ORs > 1 suggest male homicides are more likely solved, while ORs < 1 indicate the opposite. Many cities cluster around an OR of 1, showing no significant gender-based differences, as their CIs overlap 1. Cities like New York, NY, and Chicago, IL, have narrow CIs, reflecting precise estimates due to larger sample sizes, whereas cities like Albuquerque, NM, Stockton, CA, and Fresno, CA, have wide CIs, reflecting high uncertainty due to smaller samples or variability. While most cities show no significant gender bias, the variability in cities with extreme ORs or wide CIs, such as Albuquerque, NM, and Stockton, CA, warrants further investigation.
